@@ -262,11 +262,11 @@ export default function App() {
 
   const globalKpi = useMemo(() => ({
     total: enriched.length,
-    countries: countryStats.length,
+    countries: new Set(enriched.map((o) => o.country)).size,
     critical: enriched.filter((o) => o._a.overall === "critical").length,
     warning: enriched.filter((o) => o._a.overall === "warning").length,
     ok: enriched.filter((o) => o._a.overall === "ok").length,
-  }), [enriched, countryStats]);
+  }), [enriched]);
 
   const countryObjects = useMemo(() => {
     if (view.name !== "country") return [];
