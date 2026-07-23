@@ -68,6 +68,17 @@ const GROUP_INFO = {
 };
 const CONF_MARK = { "Проверено": "🟢", "Структура — общие знания": "🟡", "Публичного источника нет": "🔴" };
 
+// ─── Регионы: порядок отображения + переопределение (СНГ выделен из ASIA) ───
+const REGION_ORDER = ["CIS", "ASIA", "AFRICA", "MIDEAST", "EUROPE", "LATAM", "OTHER"];
+const REGION_LABEL = {
+  CIS: "СНГ и Кавказ", ASIA: "Азия", AFRICA: "Африка",
+  MIDEAST: "Ближний Восток", EUROPE: "Европа", LATAM: "Латинская Америка", OTHER: "Прочее",
+};
+const REGION_OF = {
+  Armenia: "CIS", Azerbaijan: "CIS", Georgia: "CIS", Kyrgyzstan: "CIS", Qazaqstan: "CIS", Uzbekistan: "CIS",
+};
+const regionFor = (o) => REGION_OF[o.country] || o.region || "OTHER";
+
 // статусные цвета: критичный = фирменный красный
 const ST = { critical: "#F0342C", warning: "#E8930C", ok: "#1FA35C", unknown: "#9A9CA0" };
 const ST_LABEL = { critical: "критично", warning: "внимание", unknown: "нет данных", ok: "в порядке" };
@@ -180,7 +191,7 @@ const SegBar = ({ counts, height = 8 }) => {
 
 export default function App() {
   const [doc, setDoc] = useState(null);
-  const [view, setView] = useState({ name: "dash" }); // {name:'dash'} | {name:'country', country}
+  const [view, setView] = useState({ name: "dash" }); // dash | {name:'region', region} | {name:'country', region, country}
   const [filters, setFilters] = useState({ q: "", status: "all" });
   const [editing, setEditing] = useState(null);
   const [tab, setTab] = useState("passport");
@@ -218,22 +229,36 @@ export default function App() {
 
   const enriched = useMemo(() => (doc?.objects || []).map((o) => ({ ...o, _a: assess(o) })), [doc]);
 
-  // ─── Агрегация по странам ───
-  const countryStats = useMemo(() => {
+  // ─── Агрегации: регионы и страны ───
+  const emptyCounts = () => ({ critical: 0, warning: 0, unknown: 0, ok: 0 });
+  const regionStats = useMemo(() => {
     const m = new Map();
     enriched.forEach((o) => {
-      if (!m.has(o.country)) m.set(o.country, { country: o.country, objects: [], counts: { critical: 0, warning: 0, unknown: 0, ok: 0 }, groups: new Set() });
+      const r = regionFor(o);
+      if (!m.has(r)) m.set(r, { region: r, objects: [], counts: emptyCounts(), countries: new Set() });
+      const c = m.get(r);
+      c.objects.push(o); c.counts[o._a.overall]++; c.countries.add(o.country);
+    });
+    return REGION_ORDER.filter((r) => m.has(r)).map((r) => {
+      const c = m.get(r);
+      return { ...c, countries: c.countries.size, overall: worst(c.objects.map((o) => o._a.overall)) };
+    });
+  }, [enriched]);
+
+  const countryStats = useMemo(() => {
+    if (view.name !== "region") return [];
+    const m = new Map();
+    enriched.filter((o) => regionFor(o) === view.region).forEach((o) => {
+      if (!m.has(o.country)) m.set(o.country, { country: o.country, objects: [], counts: emptyCounts(), groups: new Set() });
       const c = m.get(o.country);
-      c.objects.push(o);
-      c.counts[o._a.overall]++;
-      c.groups.add(o.group);
+      c.objects.push(o); c.counts[o._a.overall]++; c.groups.add(o.group);
     });
     return [...m.values()].map((c) => ({ ...c, overall: worst(c.objects.map((o) => o._a.overall)), groups: [...c.groups].sort() }))
       .sort((a, b) => {
         const r = { critical: 0, warning: 1, unknown: 2, ok: 3 };
         return r[a.overall] - r[b.overall] || b.objects.length - a.objects.length || a.country.localeCompare(b.country);
       });
-  }, [enriched]);
+  }, [enriched, view]);
 
   const globalKpi = useMemo(() => ({
     total: enriched.length,
@@ -258,7 +283,8 @@ export default function App() {
     });
   }, [enriched, view, filters]);
 
-  const openCountry = (c) => { setView({ name: "country", country: c }); setFilters({ q: "", status: "all" }); window.scrollTo(0, 0); };
+  const openRegion = (r) => { setView({ name: "region", region: r }); window.scrollTo(0, 0); };
+  const openCountry = (c) => { setView({ name: "country", region: view.region, country: c }); setFilters({ q: "", status: "all" }); window.scrollTo(0, 0); };
   const openEdit = (o) => { const { _a, ...rest } = o; setEditing(JSON.parse(JSON.stringify(rest))); setTab("passport"); };
   const setField = (k, v) => setEditing((e) => ({ ...e, [k]: v }));
   const setSys = (key, field, v) => setEditing((e) => ({ ...e, systems: { ...e.systems, [key]: { ...e.systems[key], [field]: v } } }));
@@ -359,6 +385,17 @@ export default function App() {
         .count { color:var(--mut); font-weight:600; font-size:.85rem; white-space:nowrap; }
         .pill { font-size:.72rem; font-weight:800; padding:.15rem .55rem; border-radius:999px; color:#fff; text-transform:uppercase; letter-spacing:.04em; white-space:nowrap; }
         .ccard-meta { display:flex; justify-content:space-between; gap:.6rem; font-size:.78rem; color:var(--mut); flex-wrap:wrap; }
+        .regions { grid-template-columns:repeat(auto-fill, minmax(min(20rem,100%), 1fr)); }
+        .rcard { padding:1.3rem 1.4rem 1.35rem; }
+        .rname { font-size:1.35rem; font-weight:900; font-style:italic; letter-spacing:-.02em; text-transform:uppercase; }
+        .rsub { font-size:.8rem; color:var(--mut); }
+        .objs { grid-template-columns:repeat(auto-fill, minmax(min(19rem,100%), 1fr)); }
+        .ocard { gap:.55rem; }
+        .odots { display:flex; gap:.9rem; flex-wrap:wrap; padding:.15rem 0; }
+        .odots .mini i { font-size:.7rem; }
+        .orisk { font-size:.78rem; color:#B4560E; }
+        .crumb-link { cursor:pointer; }
+        .crumb-link:hover { color:var(--ink); text-decoration:underline; }
         @media (prefers-reduced-motion:reduce){ .ccard { transition:none; } .ccard:hover { transform:none; } }
 
         /* ─ Страница страны ─ */
@@ -419,7 +456,12 @@ export default function App() {
           <div className="brand" role="button" tabIndex={0} onClick={() => setView({ name: "dash" })}
             onKeyDown={(e) => e.key === "Enter" && setView({ name: "dash" })}>
             <span className="mark" aria-hidden="true">F</span>
-            <h1>Fire Safety Tracker{view.name === "country" && <span className="crumb"> / {view.country}</span>}</h1>
+            <h1>Fire Safety Tracker
+              {view.name !== "dash" && view.region && (
+                <span className="crumb"> / <span className="crumb-link" onClick={(e) => { e.stopPropagation(); openRegion(view.region); }}>{view.region}</span></span>
+              )}
+              {view.name === "country" && <span className="crumb"> / {view.country}</span>}
+            </h1>
           </div>
           <span className="save" role="status">{saveState}</span>
           <div className="top-actions">
@@ -443,6 +485,39 @@ export default function App() {
             </div>
           </section>
 
+          <div className="grid regions">
+            {regionStats.map((r) => (
+              <div key={r.region} className="ccard rcard" role="button" tabIndex={0}
+                onClick={() => openRegion(r.region)} onKeyDown={(e) => e.key === "Enter" && openRegion(r.region)}>
+                <div className="ccard-top">
+                  <h3 className="rname">{r.region}</h3>
+                  <span className="pill" style={{ background: ST[r.overall] }}>{ST_LABEL[r.overall]}</span>
+                </div>
+                <div className="rsub">{REGION_LABEL[r.region]} · {r.countries} стран · {r.objects.length} объектов</div>
+                <SegBar counts={r.counts} height={10} />
+                <div className="ccard-meta">
+                  <span>
+                    {r.counts.critical > 0 && `${r.counts.critical} критично · `}
+                    {r.counts.warning > 0 && `${r.counts.warning} внимание · `}
+                    {r.counts.ok} ок
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </main>
+      )}
+
+      {/* ─── Страница региона: страны ─── */}
+      {view.name === "region" && (
+        <main className="wrap">
+          <div className="chead">
+            <button className="back" onClick={() => setView({ name: "dash" })}>← Все регионы</button>
+            <div style={{ flex: 1, minWidth: "12rem" }}>
+              <h2>{view.region} <span style={{ color: "var(--mut)", fontWeight: 700 }}>· {REGION_LABEL[view.region]}</span></h2>
+              <span style={{ color: "var(--mut)", fontSize: ".82rem" }}>{countryStats.length} стран</span>
+            </div>
+          </div>
           <div className="grid">
             {countryStats.map((c) => (
               <div key={c.country} className="ccard" role="button" tabIndex={0}
@@ -471,7 +546,7 @@ export default function App() {
       {view.name === "country" && (
         <main className="wrap">
           <div className="chead">
-            <button className="back" onClick={() => setView({ name: "dash" })}>← Все страны</button>
+            <button className="back" onClick={() => openRegion(view.region)}>← {view.region}</button>
             <div style={{ flex: 1, minWidth: "12rem" }}>
               <h2>{view.country}</h2>
               <span style={{ color: "var(--mut)", fontSize: ".82rem" }}>{countryObjects.length} из {enriched.filter((o) => o.country === view.country).length} объектов</span>
@@ -491,33 +566,32 @@ export default function App() {
             </select>
           </div>
 
-          <div className="rows">
-            {countryObjects.length === 0 && <div className="empty">Объектов не найдено.</div>}
+          {countryObjects.length === 0 && <div className="empty">Объектов не найдено.</div>}
+          <div className="grid objs">
             {countryObjects.map((o) => (
-              <div key={o.id} className="row" onClick={() => openEdit(o)} role="button" tabIndex={0}
-                onKeyDown={(e) => e.key === "Enter" && openEdit(o)}>
-                <div style={{ background: ST[o._a.overall] }} />
-                <div className="row-main">
-                  <div className="row-title">
-                    <span className={`tag ${o.priority === "P1" ? "p1" : ""}`}>{o.priority}</span>
-                    <span className="mono" style={{ fontWeight: 400, color: "var(--mut)", fontSize: ".76rem" }}>{o.id}</span>
-                    {o.name}
-                    <span style={{ color: "var(--mut)", fontWeight: 400 }}>{o.city}</span>
-                  </div>
-                  <div className="row-sub">
-                    <span className="mini"><i>серт</i><Dot k={o._a.cert.key} title={`Сертификат: ${o._a.cert.label}`} /></span>
-                    <span className="mini"><i>сист</i><Dot k={o._a.sysKey} title="Системы ПБ" /></span>
-                    <span className="mini"><i>обуч</i><Dot k={o._a.trainKey} title="Обучение" /></span>
-                    <span className="mini"><i>эвак</i><Dot k={o._a.drillStatus.key} title={`Эвакуация: ${o._a.drillStatus.label}`} /></span>
-                    <span>гр. {o.groupRaw || o.group} · {o.type}{isOperatorHeld(o) ? " · серт. у оператора" : ""}</span>
-                    <span className="mono">{o.area ? `${o.area} м²` : "м²?"} · {o.occupancy ? `${o.occupancy} чел` : "чел?"}</span>
-                    {o.specRisks && <span style={{ color: "#B4560E" }}>⚠ {o.specRisks}</span>}
-                    <span title={o.confidence}>{CONF_MARK[o.confidence] || ""}</span>
-                  </div>
+              <div key={o.id} className="ccard ocard" role="button" tabIndex={0}
+                style={{ borderTop: `3px solid ${ST[o._a.overall]}` }}
+                onClick={() => openEdit(o)} onKeyDown={(e) => e.key === "Enter" && openEdit(o)}>
+                <div className="ccard-top">
+                  <span className={`tag ${o.priority === "P1" ? "p1" : ""}`}>{o.priority}</span>
+                  <h3 style={{ fontSize: ".95rem" }}>{o.name}</h3>
+                  <span className="pill" style={{ background: ST[o._a.overall] }}>{ST_LABEL[o._a.overall]}</span>
                 </div>
-                <div className="row-side">
-                  <span className="chip" style={{ color: ST[o._a.overall] }}>{ST_LABEL[o._a.overall]}</span>
-                  <span className="mono" style={{ fontSize: ".74rem", color: "var(--mut)" }}>{o.updatedAt ? `обновлён ${o.updatedAt}` : "не сверялся"}</span>
+                <div className="rsub mono" style={{ marginTop: "-.3rem" }}>{o.id} · {o.city} · гр. {o.groupRaw || o.group}</div>
+                <div className="odots">
+                  <span className="mini"><Dot k={o._a.cert.key} title={o._a.cert.label} /><i>сертификат</i></span>
+                  <span className="mini"><Dot k={o._a.sysKey} title="Системы ПБ" /><i>системы</i></span>
+                  <span className="mini"><Dot k={o._a.trainKey} title="Обучение" /><i>обучение</i></span>
+                  <span className="mini"><Dot k={o._a.drillStatus.key} title={o._a.drillStatus.label} /><i>эвакуация</i></span>
+                </div>
+                <div className="ccard-meta">
+                  <span>{o.type}{isOperatorHeld(o) ? " · серт. у оператора" : ""}</span>
+                  <span className="mono">{o.area ? `${o.area} м²` : "м²?"} · {o.occupancy ? `${o.occupancy} чел` : "чел?"}</span>
+                </div>
+                {o.specRisks && <div className="orisk">⚠ {o.specRisks}</div>}
+                <div className="ccard-meta" style={{ marginTop: "auto" }}>
+                  <span>{CONF_MARK[o.confidence] || ""} {o.responsible || "ответственный не назначен"}</span>
+                  <span>{o.updatedAt ? `обновлён ${o.updatedAt}` : "не сверялся"}</span>
                 </div>
               </div>
             ))}
